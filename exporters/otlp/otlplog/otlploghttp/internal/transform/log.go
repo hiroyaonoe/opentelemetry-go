@@ -30,19 +30,23 @@ func ResourceLogs(records []log.Record) (out []*lpb.ResourceLogs, free func()) {
 	if len(records) == 0 {
 		return nil, func() {}
 	}
-	resMap := resourceLogsMap(records)
+	resMap, slfrees := resourceLogsMap(records)
 	out = resourceLogsPool.Get().([]*lpb.ResourceLogs)
 	for _, rl := range resMap {
 		out = append(out, rl)
 	}
 	return out, func() {
 		out = out[:0:0]
+		for _, slfree := range slfrees {
+			slfree()
+		}
 		resourceLogsPool.Put(out)
 	}
 }
 
-func resourceLogsMap(records []log.Record) map[attribute.Distinct]*lpb.ResourceLogs {
+func resourceLogsMap(records []log.Record) (map[attribute.Distinct]*lpb.ResourceLogs, []func()) {
 	out := make(map[attribute.Distinct]*lpb.ResourceLogs)
+	var slfrees []func()
 	for _, r := range records {
 		res := r.Resource()
 		rl, ok := out[res.Equivalent()]
@@ -56,11 +60,11 @@ func resourceLogsMap(records []log.Record) map[attribute.Distinct]*lpb.ResourceL
 			rl.SchemaUrl = res.SchemaURL()
 			out[res.Equivalent()] = rl
 		}
-		var free func()
-		rl.ScopeLogs, free = ScopeLogs(records)
-		defer free()
+		var slfree func()
+		rl.ScopeLogs, slfree = ScopeLogs(records)
+		slfrees = append(slfrees, slfree)
 	}
-	return out
+	return out, slfrees
 }
 
 var scopeLogsPool = sync.Pool{
